@@ -160,7 +160,7 @@ class TruncatedGumbel:
         self.min_inter_dist = min_inter_dist
 
         if self.max_inter_dist == 0 or self.min_inter_dist == np.inf:
-            start = random.sample(self.vocab, k=1)[0]
+            start = random.sample(self.embedding_matrix.key_to_index.keys(), k=1)[0]
             index_flat = faiss.IndexFlatL2(self.dim)
             index_flat.add(np.ascontiguousarray(self.embedding_matrix.vectors).astype(np.float32))
             D, _ = index_flat.search(np.array([self.embedding_matrix[start]]).astype(np.float32), len(self.embedding_matrix))
@@ -197,8 +197,12 @@ class TruncatedGumbel:
                               max_value = len(self.embedding_matrix) - 1)
         k = k[0]
 
+        k = int(math.ceil(k))
+        if k == 0:
+            return word
+
         if self.use_faiss:
-            D, I = self.index.search(np.array([word_embed.astype('float32')]), k=int(k))
+            D, I = self.index.search(np.array([word_embed.astype('float32')]), k=k)
             idx = I[0]
             dist = D[0]
         else:
