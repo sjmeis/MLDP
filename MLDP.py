@@ -197,9 +197,7 @@ class TruncatedGumbel:
                               max_value = len(self.embedding_matrix) - 1)
         k = k[0]
 
-        k = int(math.ceil(k))
-        if k == 0:
-            return word
+        #k = int(math.ceil(k))
 
         if self.use_faiss:
             D, I = self.index.search(np.array([word_embed.astype('float32')]), k=k)
@@ -320,7 +318,7 @@ class TEM:
 
         beta = 0.001
         
-        threshold = round(2/self.epsilon * math.log(((1-beta)*self.vocab_size)/beta), 1)
+        threshold = round(2/self.epsilon * math.log(((1-beta)*len(self.embedding_matrix))/beta), 1)
 
         Lw = [word for word in word_euclid_dict if word_euclid_dict[word] <= threshold]
 
