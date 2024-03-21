@@ -12,25 +12,34 @@ In the provided class code (**MLDP**), you will find five runnable mechanisms:
 
 Note that the code for SanText is not included as it is already publicly available [here](https://github.com/xiangyue9607/SanText).
 
+## Getting Started
+Getting started is as simple as importing the module provided in this repository (`MLDP.py`):
+
+`import sys`
+
+`sys.path.insert(0, "/path/to/MLDP.py")`
+
+`import MLDP`
+
 ## Basic Usage (example)
 For all mechanisms, you have the option to employ `faiss` ([link](https://github.com/facebookresearch/faiss)), which can most likely speed up the above mechanisms.
 
 Basic usage for all mechanisms (*M*) besides SynTF:
 
-`mechanism = M(epsilon=1, use_faiss=False)`
+`mechanism = MLDP.M(epsilon=1, use_faiss=False)`
 
-`perturbed_word = mechnanism.replace_word(orig_word)`
+`perturbed_word = mechanism.replace_word(orig_word)`
 
 For SynTF, an extra step must be taken to initialize the mechanism, namely to initialize the TF-IDF vectorizer. To do this, pass in the `data` parameter, which represents a list (or other iterable) of documents. This corpus of documents can most likely be the documents which you wish to privatize.
 
-`mechanism = SynTF(epsilon=1, data=CORPUS)`
+`mechanism = MLDP.SynTF(epsilon=1, data=CORPUS)`
 
-`perturbed_word = mechnanism.replace_word(orig_word)`
+`perturbed_word = mechanism.replace_word(orig_word)`
 
 ## Embedding Model
 By default, we use the `glove.840B.300d` embedding model (included in the `data` folder), which has been filtered down to a fixed vocabulary (`data/vocab.txt`). We have also included a smaller 50-d embedding model. Both included models are based on the GloVe models provided at this [link](https://nlp.stanford.edu/projects/glove/).
 
-If you would like to change the default embedding model, please change line 28 of `MLDP.py` to the correct model path. Note that the embedding model file must follow the file format as necessitated by the `gensim` library, namely with the header line: `[VOCAB SIZE] [EMBEDDING DIMENSION]`. See the included embedding files for an example.
+If you would like to change the default embedding model, please change line 28 of `MLDP.py` (global `EMBED` variable) to the correct model path. Note that the embedding model file must follow the file format as necessitated by the `gensim` library, namely with the header line: `[VOCAB SIZE] [EMBEDDING DIMENSION]`. See the included embedding files for an example.
 
 ## Get Privatizing!
 With these methods, you can now explore word-level Metric Local Differential Privacy text privatization. In case of any questions or suggestions, feel free to reach out to the authors.
