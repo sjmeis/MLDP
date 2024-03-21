@@ -13,6 +13,7 @@ import math
 import faiss
 import random
 import gensim.models
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 import importlib_resources as impresources
 
@@ -73,13 +74,14 @@ def euclidean_laplace_rand_fn(dimensions, epsilon):
     return l * v
 
 
-class MultivariateCalibrate:
+class MultivariateCalibrated:
     def __init__(self, epsilon, 
                  embedding_matrix=None, 
                  dim=300, 
                  use_faiss=True, 
                  vocab=VOCAB, 
-                 embed=EMBED):
+                 embed=EMBED,
+                 return_noise=False):
         self.vocab = vocab
         self.epsilon = epsilon
         if embedding_matrix is not None:
@@ -88,6 +90,7 @@ class MultivariateCalibrate:
             self.embedding_matrix = gensim.models.KeyedVectors.load_word2vec_format(embed, binary=False, unicode_errors="ignore")
         self.dim = dim
         self.use_faiss = use_faiss
+        self.return_noise = return_noise
 
         if use_faiss:
             nlist = faiss_num_list
@@ -101,7 +104,7 @@ class MultivariateCalibrate:
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
         norm_noise = noise / np.linalg.norm(noise)
         N = np.random.gamma(n, 1/self.epsilon) * norm_noise
-        return word_vec + N
+        return word_vec + N, N
 
     def get_nearest(self, vector):
         if self.use_faiss:
@@ -127,14 +130,23 @@ class MultivariateCalibrate:
             embedding_vector = None
 
         if embedding_vector is not None:
-            perturbed_vector = self.get_perturbed_vector(embedding_vector, self.dim)
+            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim)
             sim_ind = self.get_nearest(perturbed_vector)
             new_word = self.get_word_from_index(int(sim_ind))
-            if new_word is None:
-                return word
-            else: 
-                return new_word
-        return word
+            if self.return_noise == True:
+                if new_word is None:
+                    return word, noise
+                else: 
+                    return new_word, noise
+            else:
+                if new_word is None:
+                    return word
+                else: 
+                    return new_word
+        if self.return_noise == True:
+            return word, None
+        else:
+            return word
 
 class TruncatedGumbel:
     def __init__(self,
@@ -145,7 +157,8 @@ class TruncatedGumbel:
                  min_inter_dist=np.inf,
                  use_faiss=True,
                  vocab=VOCAB, 
-                 embed=EMBED):
+                 embed=EMBED,
+                 return_noise=False):
         self.vocab = vocab
         self.epsilon = epsilon
         if embedding_matrix is not None:
@@ -155,6 +168,8 @@ class TruncatedGumbel:
         self.dim = dim
         self.vocab_size = len(self.vocab)
         self.use_faiss = use_faiss
+
+        self.return_noise = return_noise
 
         self.max_inter_dist = max_inter_dist
         self.min_inter_dist = min_inter_dist
@@ -197,7 +212,7 @@ class TruncatedGumbel:
                               max_value = len(self.embedding_matrix) - 1)
         k = k[0]
 
-        #k = int(math.ceil(k))
+        k = max(0, int(k))
 
         if self.use_faiss:
             D, I = self.index.search(np.array([word_embed.astype('float32')]), k=k)
@@ -209,17 +224,24 @@ class TruncatedGumbel:
             idx = idx[:k]
             dist = dist[idx]
 
-        dist = dist + truncated_Gumbel(mu = 0, scale = self.b, 
+        noise = truncated_Gumbel(mu = 0, scale = self.b, 
                                        size=len(dist), 
                                        max_value=self.max_inter_dist)
+        dist = dist + noise
         indexes = np.argsort(dist)
         if len(indexes) > 0:
             i = idx[indexes[0]]
         else:
-            return word      
+            if self.return_noise == True:
+                return word, None
+            else:
+                return word
 
         perturbed_word = self.embedding_matrix.index_to_key[i]
-        return perturbed_word    
+        if self.return_noise == True:
+            return perturbed_word, noise    
+        else:
+            return perturbed_word
 
 class VickreyMechanism:
     def __init__(self,
@@ -229,7 +251,8 @@ class VickreyMechanism:
                  k = 2, t = [1, 0],
                  use_faiss=True,
                  vocab=VOCAB, 
-                 embed=EMBED):
+                 embed=EMBED,
+                 return_noise=False):
         self.vocab = vocab
         self.epsilon = epsilon
         if embedding_matrix is not None:
@@ -242,6 +265,8 @@ class VickreyMechanism:
         self.k = k
         self.t = np.asarray(t)
         self.use_faiss = use_faiss
+
+        self.return_noise = return_noise
 
         if use_faiss:
             nlist = faiss_num_list
@@ -260,7 +285,8 @@ class VickreyMechanism:
         if word_embed is None: 
             return word
 
-        noisy_vector = word_embed + euclidean_laplace_rand_fn(dimensions=self.dim, epsilon=self.epsilon)
+        noise = euclidean_laplace_rand_fn(dimensions=self.dim, epsilon=self.epsilon)
+        noisy_vector = word_embed + noise
 
         if self.use_faiss:
             D, I = self.index.search(np.array([noisy_vector.astype('float32')]), int(self.k + 1))
@@ -284,7 +310,10 @@ class VickreyMechanism:
         i = np.random.choice(idx, p = p)
 
         perturbed_word = self.embedding_matrix.index_to_key[i]
-        return perturbed_word
+        if self.return_noise == True:
+            return perturbed_word, noise
+        else:
+            return perturbed_word
 
 class TEM:
     def __init__(self, 
@@ -293,7 +322,8 @@ class TEM:
                 dim=300,
                 use_faiss=True,
                 vocab=VOCAB, 
-                embed=EMBED):
+                embed=EMBED,
+                return_noise=False):
         self.vocab = vocab
         self.epsilon = epsilon
         if embedding_matrix is not None:
@@ -302,6 +332,7 @@ class TEM:
             self.embedding_matrix = gensim.models.KeyedVectors.load_word2vec_format(embed, binary=False, unicode_errors="ignore")
         self.vocab_size = len(self.vocab)
         self.dim = dim
+        self.return_noise = return_noise
 
     def replace_word(self, input_word, threshold=0.5):     
         if input_word in self.embedding_matrix:
@@ -326,16 +357,24 @@ class TEM:
 
         f["⊥"] = -threshold + 2 * np.log(self.vocab_size/len(Lw)) / self.epsilon
 
-        f = {word: f[word] + np.random.gumbel(0, 2 / self.epsilon) for word in f}
+        noise = [np.random.gumbel(0, 2 / self.epsilon) for _ in f]
+        f = {word: f[word] + noise[i] for i, word in enumerate(f)}
         
         privatized_word = max(f, key=f.get)
 
-        if privatized_word == "⊥":
-            new_word = np.random.choice([word for word in self.embedding_matrix if word not in Lw])
-            return new_word
+        if self.return_noise == True:
+            if privatized_word == "⊥":
+                new_word = np.random.choice([word for word in self.embedding_matrix.key_to_index.keys() if word not in Lw])
+                return new_word, noise
+            else:
+                return privatized_word, noise
         else:
-            return privatized_word
-
+            if privatized_word == "⊥":
+                new_word = np.random.choice([word for word in self.embedding_matrix.key_to_index.keys() if word not in Lw])
+                return new_word
+            else:
+                return privatized_word
+            
 class Mahalanobis:
     def __init__(self, 
                 epsilon, 
@@ -344,7 +383,8 @@ class Mahalanobis:
                 dim=300, 
                 use_faiss=True,
                 vocab=VOCAB, 
-                embed=EMBED):
+                embed=EMBED,
+                return_noise=False):
         self.vocab_dict = vocab
         self.epsilon = epsilon
         self.lambd = lambd
@@ -356,6 +396,8 @@ class Mahalanobis:
         self.cov_mat = np.cov(self.embedding_matrix.vectors, rowvar=False) / np.var(self.embedding_matrix.vectors)
         self.identity_mat = np.identity(self.dim)
         self.use_faiss = use_faiss
+
+        self.return_noise = return_noise
 
         if use_faiss:
             nlist = faiss_num_list
@@ -369,7 +411,7 @@ class Mahalanobis:
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
         norm_noise = np.divide(noise, np.linalg.norm(noise))
         Z = np.multiply(np.random.gamma(n, 1/self.epsilon), np.dot(sqrtm(self.lambd*self.cov_mat + (1-self.lambd)*self.identity_mat), norm_noise))
-        return word_vec + Z
+        return word_vec + Z, Z
 
     def get_nearest(self, vector):
         if self.use_faiss:
@@ -394,11 +436,64 @@ class Mahalanobis:
             embedding_vector = None
 
         if embedding_vector is not None:
-            perturbed_vector = self.get_perturbed_vector(embedding_vector, self.dim)
+            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim)
             sim_ind = self.get_nearest(perturbed_vector)
             new_word = self.get_word_from_index(sim_ind)
-            if new_word is None:
-                return word
+            if self.return_noise == True:
+                if new_word is None:
+                    return word, noise
+                else:
+                    return new_word, noise
             else:
-                return new_word
-        return word
+                if new_word is None:
+                    return word
+                else:
+                    return new_word
+        if self.return_noise == True:
+            return word, None
+        else:
+            return word
+        
+class SynTF:
+    def __init__(self, epsilon, data):
+        self.epsilon = epsilon
+        self.sensitivity = 1.0
+        self.entire_doc = [" ".join([doc for doc in data])]
+        self.vectorizer = TfidfVectorizer()
+        self.tfidf_matrix = self.get_tfidf()
+        self.words = list(self.tfidf_matrix.index)
+        self.syn_dict = {word:self.synonym_extractor(phrase=word) for word in self.words}
+        self.syn_scores = {word:self.get_synonym_score(word) for word in list(self.syn_dict.keys())}
+
+    def get_tfidf(self):
+        vectors = self.vectorizer.fit_transform(self.entire_doc)
+        tf_idf = pd.DataFrame(vectors.todense())
+        tf_idf.columns = self.vectorizer.get_feature_names_out()
+        tfidf_matrix = tf_idf.T
+        return tfidf_matrix
+
+    def get_synonym_score(self, word):
+        score_dict = {}
+        for syn in self.syn_dict[word]:
+            if syn in self.tfidf_matrix.index: score_dict[syn] = self.tfidf_matrix.loc[word][0]
+            else: score_dict[syn] = 0
+        return score_dict
+
+    def synonym_extractor(self, phrase):
+        synonyms = set()
+        for syn in wordnet.synsets(phrase):
+            for l in syn.lemmas():
+                synonyms.add(l.name())
+        return synonyms
+
+    def replace_word(self, word):
+        if word not in self.syn_scores: return word
+
+        scores = self.syn_scores[word]
+        if not scores: return word
+
+        probabilities = [np.exp(self.epsilon * score / (2 * self.sensitivity)) for score in scores.values()]
+
+        probabilities = probabilities / np.linalg.norm(probabilities, ord=1)
+
+        return np.random.choice(list(scores.keys()), 1, p=probabilities)[0]

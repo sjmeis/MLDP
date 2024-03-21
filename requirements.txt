@@ -1,0 +1,9 @@
+faiss_cpu
+gensim
+importlib_resources
+nltk
+numba
+numpy
+pandas
+scikit_learn
+scipy
