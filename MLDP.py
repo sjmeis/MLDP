@@ -14,18 +14,30 @@ import faiss
 import random
 import gensim.models
 from sklearn.feature_extraction.text import TfidfVectorizer
+import os
+import pickle
 
 import importlib_resources as impresources
 
 faiss_num_list = 100
 faiss_num_probe = 50
 
+# Get the directory of the current script to build relative paths
+_mldp_dir = os.path.dirname(os.path.abspath(__file__))
+
 # set global (default) vocab
-with open(impresources.files("MLDP") / "data" / "vocab.txt", 'r') as f:
-    VOCAB = set([x.strip() for x in f.readlines()])
+try:
+    with open(os.path.join(_mldp_dir, "data", "vocab.txt"), 'r') as f:
+        VOCAB = set([x.strip() for x in f.readlines()])
+except FileNotFoundError:
+    print("Warning: Default vocab file not found. Please set MLDP.VOCAB manually.")
+    VOCAB = set()
 
 # set global (default) embedding matrix
-EMBED = impresources.files("MLDP") / "data" / "glove.840B.300d_filtered.txt"
+EMBED = os.path.join(_mldp_dir, "data", "glove.840B.300d_filtered.txt")
+if not os.path.exists(EMBED):
+    print("Warning: Default embedding file not found. Please set MLDP.EMBED manually.")
+    EMBED = None
 
 @nb.njit(fastmath=True, parallel=True)
 def calc_distance(vec_1,vec_2):
@@ -116,9 +128,8 @@ class MultivariateCalibrated:
             return most_sim_index
 
     def get_word_from_index(self, index):
-        found = [k for k,v in self.embedding_matrix.key_to_index.items() if v == index]
-        if len(found) > 0:
-            return found[0]
+        if 0 <= index < len(self.embedding_matrix.index_to_key):
+            return self.embedding_matrix.index_to_key[index]
         else:
             return None
 
@@ -320,7 +331,7 @@ class TEM:
                 epsilon, 
                 embedding_matrix=None, 
                 dim=300,
-                use_faiss=True,
+                use_faiss=False,
                 vocab=VOCAB, 
                 embed=EMBED,
                 return_noise=False):
@@ -333,6 +344,11 @@ class TEM:
         self.vocab_size = len(self.vocab)
         self.dim = dim
         self.return_noise = return_noise
+        self.use_faiss = use_faiss
+
+        if self.use_faiss:
+            self.index = faiss.IndexFlatL2(self.dim)
+            self.index.add(np.ascontiguousarray(self.embedding_matrix.vectors).astype(np.float32))
 
     def replace_word(self, input_word, threshold=0.5):     
         if input_word in self.embedding_matrix:
@@ -343,15 +359,22 @@ class TEM:
         if word_embed is None: 
             return input_word
 
-        euclid_dists = np.linalg.norm(self.embedding_matrix.vectors - word_embed, axis=1)
-
-        word_euclid_dict = {word:dist for word, dist in zip(self.embedding_matrix.key_to_index.keys(), euclid_dists)}
-
         beta = 0.001
         
         threshold = round(2/self.epsilon * math.log(((1-beta)*len(self.embedding_matrix))/beta), 1)
 
-        Lw = [word for word in word_euclid_dict if word_euclid_dict[word] <= threshold]
+        if self.use_faiss:
+            # Use FAISS range_search to find neighbors efficiently
+            lims, D, I = self.index.range_search(np.array([word_embed.astype('float32')]), threshold**2)
+            indices = I
+            dists = np.sqrt(D)
+            # Create a dictionary of the words and their distances for the neighborhood
+            word_euclid_dict = {self.embedding_matrix.index_to_key[i]: dist for i, dist in zip(indices, dists)}
+            Lw = list(word_euclid_dict.keys())
+        else:
+            euclid_dists = np.linalg.norm(self.embedding_matrix.vectors - word_embed, axis=1)
+            word_euclid_dict = {word:dist for word, dist in zip(self.embedding_matrix.key_to_index.keys(), euclid_dists)}
+            Lw = [word for word in word_euclid_dict if word_euclid_dict[word] <= threshold]
 
         f = {word: -word_euclid_dict[word] for word in Lw}
 
@@ -395,6 +418,11 @@ class Mahalanobis:
             self.embedding_matrix = gensim.models.KeyedVectors.load_word2vec_format(embed, binary=False, unicode_errors="ignore")
         self.cov_mat = np.cov(self.embedding_matrix.vectors, rowvar=False) / np.var(self.embedding_matrix.vectors)
         self.identity_mat = np.identity(self.dim)
+        
+        # Pre-compute the expensive matrix square root and store it
+        maha_mat = self.lambd*self.cov_mat + (1-self.lambd)*self.identity_mat
+        self.maha_mat_sqrt = sqrtm(maha_mat).real
+
         self.use_faiss = use_faiss
 
         self.return_noise = return_noise
@@ -410,7 +438,8 @@ class Mahalanobis:
     def get_perturbed_vector(self, word_vec, n):
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
         norm_noise = np.divide(noise, np.linalg.norm(noise))
-        Z = np.multiply(np.random.gamma(n, 1/self.epsilon), np.dot(sqrtm(self.lambd*self.cov_mat + (1-self.lambd)*self.identity_mat), norm_noise))
+        # Use the pre-computed matrix square root
+        Z = np.multiply(np.random.gamma(n, 1/self.epsilon), np.dot(self.maha_mat_sqrt, norm_noise))
         return word_vec + Z, Z
 
     def get_nearest(self, vector):
@@ -424,9 +453,8 @@ class Mahalanobis:
             return most_sim_index
 
     def get_word_from_index(self, index):
-        found = [k for k, v in self.embedding_matrix.key_to_index.items() if v == index]
-        if len(found) > 0:
-            return found[0]
+        if 0 <= index < len(self.embedding_matrix.index_to_key):
+            return self.embedding_matrix.index_to_key[index]
         return None
 
     def replace_word(self, word):
@@ -455,15 +483,43 @@ class Mahalanobis:
             return word
         
 class SynTF:
-    def __init__(self, epsilon, data):
+    def __init__(self, epsilon, data, cache_path="syntf_cache.pkl"):
         self.epsilon = epsilon
         self.sensitivity = 1.0
+        self.cache_path = cache_path
+
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, 'rb') as f:
+                    cache_data = pickle.load(f)
+                self.vectorizer = cache_data['vectorizer']
+                self.tfidf_matrix = cache_data['tfidf_matrix']
+                self.words = cache_data['words']
+                self.syn_dict = cache_data['syn_dict']
+                self.syn_scores = cache_data['syn_scores']
+                return
+            except Exception as e:
+                print(f"Could not load cache, rebuilding: {e}")
+
         self.entire_doc = [" ".join([doc for doc in data])]
         self.vectorizer = TfidfVectorizer()
         self.tfidf_matrix = self.get_tfidf()
         self.words = list(self.tfidf_matrix.index)
         self.syn_dict = {word:self.synonym_extractor(phrase=word) for word in self.words}
         self.syn_scores = {word:self.get_synonym_score(word) for word in list(self.syn_dict.keys())}
+
+        try:
+            with open(self.cache_path, 'wb') as f:
+                cache_data = {
+                    'vectorizer': self.vectorizer,
+                    'tfidf_matrix': self.tfidf_matrix,
+                    'words': self.words,
+                    'syn_dict': self.syn_dict,
+                    'syn_scores': self.syn_scores
+                }
+                pickle.dump(cache_data, f)
+        except Exception as e:
+            print(f"Could not save cache: {e}")
 
     def get_tfidf(self):
         vectors = self.vectorizer.fit_transform(self.entire_doc)
