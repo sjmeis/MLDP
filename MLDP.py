@@ -87,7 +87,7 @@ def euclidean_laplace_rand_fn(dimensions, epsilon):
 
 
 class MultivariateCalibrated:
-    def __init__(self, epsilon, 
+    def __init__(self, epsilon=None, 
                  embedding_matrix=None, 
                  dim=300, 
                  use_faiss=True, 
@@ -112,10 +112,10 @@ class MultivariateCalibrated:
             self.index.add(self.embedding_matrix.vectors)
             self.index.probe = faiss_num_probe
 
-    def get_perturbed_vector(self, word_vec, n):
+    def get_perturbed_vector(self, word_vec, n, epsilon):
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
         norm_noise = noise / np.linalg.norm(noise)
-        N = np.random.gamma(n, 1/self.epsilon) * norm_noise
+        N = np.random.gamma(n, 1/(epsilon)) * norm_noise
         return word_vec + N, N
 
     def get_nearest(self, vector):
@@ -133,7 +133,11 @@ class MultivariateCalibrated:
         else:
             return None
 
-    def replace_word(self, word):
+    def replace_word(self, word, epsilon=None):
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         N = None
         if word in self.embedding_matrix:
             embedding_vector = self.embedding_matrix[word]
@@ -141,7 +145,7 @@ class MultivariateCalibrated:
             embedding_vector = None
 
         if embedding_vector is not None:
-            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim)
+            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim, epsilon)
             sim_ind = self.get_nearest(perturbed_vector)
             new_word = self.get_word_from_index(int(sim_ind))
             if self.return_noise == True:
@@ -161,7 +165,7 @@ class MultivariateCalibrated:
 
 class TruncatedGumbel:
     def __init__(self,
-                 epsilon, 
+                 epsilon=None, 
                  embedding_matrix=None,
                  dim=300,
                  max_inter_dist=0,
@@ -209,7 +213,11 @@ class TruncatedGumbel:
             self.index.add(self.embedding_matrix.vectors)
             self.index.probe = faiss_num_probe
         
-    def replace_word(self, word):    
+    def replace_word(self, word, epsilon=None):    
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         if word in self.embedding_matrix:
             word_embed = self.embedding_matrix[word]
         else:
@@ -217,6 +225,13 @@ class TruncatedGumbel:
 
         if word_embed is None: 
             return word
+
+        # recalculate a and b for this epsilon
+        a = (epsilon - (2*(1 + np.log(len(self.embedding_matrix))) / self.min_inter_dist)) / 3
+        if a * self.min_inter_dist <= 0:
+            b = 2 * self.max_inter_dist / (lambertw(2 * a * self.max_inter_dist).real)
+        else:
+            b = 2 * self.max_inter_dist / (np.min(np.array([lambertw(2 * a * self.max_inter_dist).real, np.log(a * self.min_inter_dist)])))
 
         k = truncated_Poisson(mu = np.log(len(self.embedding_matrix) - 1), 
                               size = 1,
@@ -235,7 +250,7 @@ class TruncatedGumbel:
             idx = idx[:k]
             dist = dist[idx]
 
-        noise = truncated_Gumbel(mu = 0, scale = self.b, 
+        noise = truncated_Gumbel(mu = 0, scale = b, 
                                        size=len(dist), 
                                        max_value=self.max_inter_dist)
         dist = dist + noise
@@ -256,7 +271,7 @@ class TruncatedGumbel:
 
 class VickreyMechanism:
     def __init__(self,
-                 epsilon,
+                 epsilon=None,
                  embedding_matrix=None, 
                  dim=300,
                  k = 2, t = [1, 0],
@@ -287,7 +302,11 @@ class VickreyMechanism:
             self.index.add(self.embedding_matrix.vectors)
             self.index.probe = faiss_num_probe
     
-    def replace_word(self, word):    
+    def replace_word(self, word, epsilon=None):    
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         if word in self.embedding_matrix:
             word_embed = self.embedding_matrix[word]
         else:
@@ -296,7 +315,7 @@ class VickreyMechanism:
         if word_embed is None: 
             return word
 
-        noise = euclidean_laplace_rand_fn(dimensions=self.dim, epsilon=self.epsilon)
+        noise = euclidean_laplace_rand_fn(dimensions=self.dim, epsilon=epsilon)
         noisy_vector = word_embed + noise
 
         if self.use_faiss:
@@ -328,7 +347,7 @@ class VickreyMechanism:
 
 class TEM:
     def __init__(self, 
-                epsilon, 
+                epsilon=None, 
                 embedding_matrix=None, 
                 dim=300,
                 use_faiss=False,
@@ -350,7 +369,11 @@ class TEM:
             self.index = faiss.IndexFlatL2(self.dim)
             self.index.add(np.ascontiguousarray(self.embedding_matrix.vectors).astype(np.float32))
 
-    def replace_word(self, input_word, threshold=0.5):     
+    def replace_word(self, input_word, epsilon=None, threshold=0.5):     
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         if input_word in self.embedding_matrix:
             word_embed = self.embedding_matrix[input_word]
         else:
@@ -360,8 +383,7 @@ class TEM:
             return input_word
 
         beta = 0.001
-        
-        threshold = round(2/self.epsilon * math.log(((1-beta)*len(self.embedding_matrix))/beta), 1)
+        threshold = round(2/epsilon * math.log(((1-beta)*len(self.embedding_matrix))/beta), 1)
 
         if self.use_faiss:
             # Use FAISS range_search to find neighbors efficiently
@@ -378,9 +400,9 @@ class TEM:
 
         f = {word: -word_euclid_dict[word] for word in Lw}
 
-        f["⊥"] = -threshold + 2 * np.log(self.vocab_size/len(Lw)) / self.epsilon
+        f["⊥"] = -threshold + 2 * np.log(self.vocab_size/len(Lw)) / epsilon
 
-        noise = [np.random.gumbel(0, 2 / self.epsilon) for _ in f]
+        noise = [np.random.gumbel(0, 2 / epsilon) for _ in f]
         f = {word: f[word] + noise[i] for i, word in enumerate(f)}
         
         privatized_word = max(f, key=f.get)
@@ -400,7 +422,7 @@ class TEM:
             
 class Mahalanobis:
     def __init__(self, 
-                epsilon, 
+                epsilon=None, 
                 embedding_matrix=None, 
                 lambd=0.2, 
                 dim=300, 
@@ -435,11 +457,11 @@ class Mahalanobis:
             self.index.add(self.embedding_matrix.vectors)
             self.index.probe = faiss_num_probe
 
-    def get_perturbed_vector(self, word_vec, n):
+    def get_perturbed_vector(self, word_vec, n, epsilon):
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
         norm_noise = np.divide(noise, np.linalg.norm(noise))
         # Use the pre-computed matrix square root
-        Z = np.multiply(np.random.gamma(n, 1/self.epsilon), np.dot(self.maha_mat_sqrt, norm_noise))
+        Z = np.multiply(np.random.gamma(n, 1/epsilon), np.dot(self.maha_mat_sqrt, norm_noise))
         return word_vec + Z, Z
 
     def get_nearest(self, vector):
@@ -457,14 +479,18 @@ class Mahalanobis:
             return self.embedding_matrix.index_to_key[index]
         return None
 
-    def replace_word(self, word):
+    def replace_word(self, word, epsilon=None):
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         if word in self.embedding_matrix:
             embedding_vector = self.embedding_matrix[word]
         else:
             embedding_vector = None
 
         if embedding_vector is not None:
-            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim)
+            perturbed_vector, noise = self.get_perturbed_vector(embedding_vector, self.dim, epsilon)
             sim_ind = self.get_nearest(perturbed_vector)
             new_word = self.get_word_from_index(sim_ind)
             if self.return_noise == True:
@@ -483,7 +509,7 @@ class Mahalanobis:
             return word
         
 class SynTF:
-    def __init__(self, epsilon, data, cache_path="syntf_cache.pkl"):
+    def __init__(self, epsilon=None, data=None, cache_path="syntf_cache.pkl"):
         self.epsilon = epsilon
         self.sensitivity = 1.0
         self.cache_path = cache_path
@@ -542,13 +568,17 @@ class SynTF:
                 synonyms.add(l.name())
         return synonyms
 
-    def replace_word(self, word):
+    def replace_word(self, word, epsilon=None):
+        if epsilon is None:
+            epsilon = self.epsilon
+        if epsilon is None:
+            raise ValueError("Epsilon must be provided either at instantiation or in the replace_word call.")
         if word not in self.syn_scores: return word
 
         scores = self.syn_scores[word]
         if not scores: return word
 
-        probabilities = [np.exp(self.epsilon * score / (2 * self.sensitivity)) for score in scores.values()]
+        probabilities = [np.exp(epsilon * score / (2 * self.sensitivity)) for score in scores.values()]
 
         probabilities = probabilities / np.linalg.norm(probabilities, ord=1)
 

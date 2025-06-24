@@ -50,12 +50,12 @@ mechanisms["SynTF"] = {
 
 # Define the Ray remote function BEFORE using it!
 @ray.remote
-def evaluate_mechanism(mechanism, test_words, use_faiss):
+def evaluate_mechanism(mechanism, test_words, use_faiss, epsilon):
     results = []
     start_time = time.time()
     for word in test_words:
         try:
-            perturbed_word = mechanism.replace_word(word)
+            perturbed_word = mechanism.replace_word(word, epsilon=epsilon)
         except Exception as e:
             print(f"Error with word '{word}' ({'with' if use_faiss else 'without'} FAISS): {str(e)}")
     end_time = time.time()
@@ -78,17 +78,18 @@ length_results = []
 
 futures = []
 future_labels = []
+epsilon = 1  # Set your desired epsilon value here, or make it variable per word if needed
 for mechanism_name, mechanism_versions in mechanisms.items():
     # Test with FAISS if supported
     if mechanism_versions["with_faiss"] is not None:
         futures.append(
-            evaluate_mechanism.remote(mechanism_versions["with_faiss"], test_words, True)
+            evaluate_mechanism.remote(mechanism_versions["with_faiss"], test_words, True, epsilon)
         )
         future_labels.append((mechanism_name, "with_faiss"))
     # Test without FAISS
     if mechanism_versions["without_faiss"] is not None:
         futures.append(
-            evaluate_mechanism.remote(mechanism_versions["without_faiss"], test_words, False)
+            evaluate_mechanism.remote(mechanism_versions["without_faiss"], test_words, False, epsilon)
         )
         future_labels.append((mechanism_name, "without_faiss"))
 
