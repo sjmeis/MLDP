@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import os
-import math
 import numpy as np
 import scipy.stats as sct
 from scipy.special import softmax

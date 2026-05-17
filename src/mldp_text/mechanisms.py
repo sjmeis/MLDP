@@ -1,11 +1,8 @@
 import random
-import os
-import pickle
 import numpy as np
 import pandas as pd
 import math
 import faiss
-import gensim.models
 from scipy.special import lambertw, softmax
 from scipy.linalg import sqrtm
 from sklearn.feature_extraction.text import TfidfVectorizer
