@@ -45,7 +45,7 @@ class MultivariateCalibrated:
             self.index = faiss.IndexIVFFlat(quantizer, dim, nlist)
             self.index.train(self.embedding_matrix.vectors)
             self.index.add(self.embedding_matrix.vectors)
-            self.index.probe = faiss_num_probe
+            self.index.nprobe = faiss_num_probe
 
     def get_perturbed_vector(self, word_vec, n):
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
@@ -143,7 +143,7 @@ class TruncatedGumbel:
             self.index = faiss.IndexIVFFlat(quantizer, dim, nlist)
             self.index.train(self.embedding_matrix.vectors)
             self.index.add(self.embedding_matrix.vectors)
-            self.index.probe = faiss_num_probe
+            self.index.nprobe = faiss_num_probe
         
     def replace_word(self, word):    
         if word in self.embedding_matrix:
@@ -221,7 +221,7 @@ class VickreyMechanism:
             self.index = faiss.IndexIVFFlat(quantizer, dim, nlist)
             self.index.train(self.embedding_matrix.vectors)
             self.index.add(self.embedding_matrix.vectors)
-            self.index.probe = faiss_num_probe
+            self.index.nprobe = faiss_num_probe
     
     def replace_word(self, word):    
         if word in self.embedding_matrix:
@@ -352,7 +352,7 @@ class Mahalanobis:
             self.index = faiss.IndexIVFFlat(quantizer, dim, nlist)
             self.index.train(self.embedding_matrix.vectors)
             self.index.add(self.embedding_matrix.vectors)
-            self.index.probe = faiss_num_probe
+            self.index.nprobe = faiss_num_probe
 
     def get_perturbed_vector(self, word_vec, n):
         noise = np.random.multivariate_normal(np.zeros(n), np.identity(n))
