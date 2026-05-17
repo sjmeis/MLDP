@@ -2,7 +2,7 @@
 
   # MLDP
 
-  [![PyPI version](https://img.shields.io/pypi/v/mldp.svg)](https://pypi.org/project/mldp/)
+  [![PyPI version](https://img.shields.io/pypi/v/mldp-text.svg)](https://pypi.org/project/mldp-text/)
   [![GitHub stars](https://img.shields.io/github/stars/sjmeis/MLDP.svg?style=social)](https://github.com/sjmeis/MLDP/stargazers)
   [![License](https://img.shields.io/github/license/sjmeis/MLDP.svg)](https://github.com/sjmeis/MLDP/blob/main/LICENSE)
 
@@ -26,7 +26,7 @@ Note that the code for SanText is not included as it is already publicly availab
 Getting started is as simple as installing the package:
 
 ```bash
-pip install mldp_text
+pip install mldp-text
 ```
 
 ## Basic Usage 
